@@ -137,7 +137,6 @@ mod tests {
         assert_eq!(store.remove("key1".to_string()), None);
     }
 
-
     #[test]
     fn test_parse_valid_commands() {
         // Test SET
