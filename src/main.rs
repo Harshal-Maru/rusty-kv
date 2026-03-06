@@ -1,18 +1,24 @@
 use rusty_kv::{Command, KvStore, parse_command};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:4000").unwrap();
     println!("Server Listening");
 
-    let mut store = KvStore::new();
+    let store = Arc::new(Mutex::new(KvStore::new()));
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 println!("New Connection");
-                handle_client(stream, &mut store);
+
+                let store = Arc::clone(&store);
+                thread::spawn(move || {
+                    handle_client(stream, store);
+                });
             }
             Err(e) => {
                 eprintln!("Failed to establish conncetion {}", e);
@@ -21,7 +27,7 @@ fn main() {
     }
 }
 
-fn handle_client(mut stream: TcpStream, store: &mut KvStore) {
+fn handle_client(mut stream: TcpStream, store: Arc<Mutex<KvStore>>) {
     let s = stream.try_clone().unwrap();
 
     let mut reader = BufReader::new(&s);
@@ -38,20 +44,23 @@ fn handle_client(mut stream: TcpStream, store: &mut KvStore) {
         }
 
         let response = match parse_command(&line) {
-            Ok(command) => match command {
-                Command::Set { key, value } => {
-                    store.set(key, value);
-                    "OK\n".to_string()
+            Ok(command) => {
+                let mut store = store.lock().unwrap();
+                match command {
+                    Command::Set { key, value } => {
+                        store.set(key, value);
+                        "OK\n".to_string()
+                    }
+                    Command::Get { key } => match store.get(key) {
+                        Some(val) => format!("{}\n", val),
+                        None => "(nil)\n".to_string(),
+                    },
+                    Command::Remove { key } => match store.remove(key) {
+                        Some(_) => "OK\n".to_string(),
+                        None => "(nil)\n".to_string(),
+                    },
                 }
-                Command::Get { key } => match store.get(key) {
-                    Some(val) => format!("{}\n", val),
-                    None => "(nil)\n".to_string(),
-                },
-                Command::Remove { key } => match store.remove(key) {
-                    Some(_) => "OK\n".to_string(),
-                    None => "(nil)\n".to_string(),
-                },
-            },
+            }
             Err(e) => format!("ERROR: {:?}\n", e),
         };
 
